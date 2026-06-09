@@ -89,6 +89,15 @@ class Config
      */
     private $ignoreEncryption = false;
 
+    /**
+     * Password used to decrypt an encrypted PDF. Empty string unlocks PDFs
+     * encrypted with an empty user password (the most common case where
+     * encryption is used only to set permission flags).
+     *
+     * @var string
+     */
+    private $decryptPassword = '';
+
     public function getFontSpaceLimit()
     {
         return $this->fontSpaceLimit;
@@ -171,5 +180,15 @@ class Config
     public function setIgnoreEncryption(bool $ignoreEncryption): void
     {
         $this->ignoreEncryption = $ignoreEncryption;
+    }
+
+    public function getDecryptPassword(): string
+    {
+        return $this->decryptPassword;
+    }
+
+    public function setDecryptPassword(string $password): void
+    {
+        $this->decryptPassword = $password;
     }
 }

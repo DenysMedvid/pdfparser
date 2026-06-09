@@ -75,4 +75,15 @@ class ConfigTest extends TestCase
         $this->fixture->setRetainImageContent(false);
         $this->assertFalse($this->fixture->getRetainImageContent());
     }
+
+    /**
+     * Tests setter and getter for the decryption password.
+     */
+    public function testDecryptPasswordSetterGetter(): void
+    {
+        $this->assertSame('', $this->fixture->getDecryptPassword());
+
+        $this->fixture->setDecryptPassword('secret');
+        $this->assertSame('secret', $this->fixture->getDecryptPassword());
+    }
 }

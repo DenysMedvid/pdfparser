@@ -67,6 +67,10 @@ require_once $rootFolder.'/Font.php';
 require_once $rootFolder.'/Page.php';
 require_once $rootFolder.'/Element/ElementString.php';
 require_once $rootFolder.'/Encoding/AbstractEncoding.php';
+// Implemented by StandardSecurityHandlerR4/R5/R6.
+require_once $rootFolder.'/Encryption/StandardSecurityHandler.php';
+// Extended by IncorrectPasswordException and UnsupportedSecurityHandlerException.
+require_once $rootFolder.'/Exception/EncryptionException.php';
 
 /*
  * Load the rest of PDFParser files from /src/Smalot/PDFParser

@@ -102,9 +102,10 @@ class Parser
         // Create structure from raw data.
         list($xref, $data) = $this->rawDataParser->parseData($content);
 
-        if (isset($xref['trailer']['encrypt']) && false === $this->config->getIgnoreEncryption()) {
-            throw new \Exception('Secured pdf file are currently not supported.');
-        }
+        // Authentication for encrypted PDFs happens inside RawDataParser
+        // (see initSecurityHandler). If parseData returned successfully,
+        // the document is either unencrypted, was unlocked with the
+        // configured password, or has ignoreEncryption set.
 
         if (empty($data)) {
             throw new \Exception('Object list not found. Possible secured file.');

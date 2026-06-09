@@ -38,6 +38,7 @@ namespace PHPUnitTests\Integration;
 use PHPUnitTests\TestCase;
 use Smalot\PdfParser\Config;
 use Smalot\PdfParser\Document;
+use Smalot\PdfParser\Exception\EncryptionException;
 use Smalot\PdfParser\Parser;
 use Smalot\PdfParser\XObject\Image;
 
@@ -74,8 +75,13 @@ class ParserTest extends TestCase
                             $this->assertTrue('' !== $content);
                         }
                     } catch (\Exception $e) {
+                        // Tolerate PDFs that fail purely because the
+                        // encryption configuration is out of scope for
+                        // our Standard handler (e.g. non-empty password,
+                        // public-key handler) or upstream TCPDF parsing
+                        // errors. Any other exception is a real failure.
                         if (
-                            'Secured pdf file are currently not supported.' !== $e->getMessage()
+                            !$e instanceof EncryptionException
                             && 0 != strpos($e->getMessage(), 'TCPDF_PARSER')
                         ) {
                             throw $e;
@@ -405,21 +411,21 @@ class ParserTest extends TestCase
     }
 
     /**
-     * Tests handling of encrypted PDF.
+     * Historically the library refused any encrypted PDF and this test
+     * asserted that refusal. With Standard-handler decryption now
+     * implemented for empty user passwords, this fixture — which has
+     * an empty user password despite the trailer-flagged /Encrypt —
+     * parses successfully on the default code path.
      *
      * @see https://github.com/smalot/pdfparser/pull/653
      */
     public function testNoIgnoreEncryption(): void
     {
         $filename = $this->rootDir.'/samples/not_really_encrypted.pdf';
-        $threw = false;
-        try {
-            (new Parser([]))->parseFile($filename);
-        } catch (\Exception $e) {
-            // we expect an exception to be thrown if an encrypted PDF is encountered.
-            $threw = true;
-        }
-        $this->assertTrue($threw);
+
+        $document = (new Parser([]))->parseFile($filename);
+
+        $this->assertInstanceOf(Document::class, $document);
     }
 
     /**
@@ -437,6 +443,74 @@ class ParserTest extends TestCase
         $this->assertTrue((new Parser([], $config))->parseFile($filename) instanceof Document);
 
         // without the configuration option set, an exception would be thrown.
+    }
+
+    /**
+     * @return array<string,array{0:string}>
+     */
+    public function encryptedFixtureProvider(): array
+    {
+        return [
+            'R=2 RC4-40'       => ['r2_rc4_40.pdf'],
+            'R=3 RC4-128'      => ['r3_rc4_128.pdf'],
+            'R=4 RC4-128 (V2)' => ['r4_rc4_128.pdf'],
+            'R=4 AES-128'      => ['r4_aes_128.pdf'],
+            'R=5 AES-256'      => ['r5_aes_256.pdf'],
+            'R=6 AES-256 (PDF 2.0)' => ['r6_aes_256.pdf'],
+        ];
+    }
+
+    /**
+     * Every supported Standard-handler revision must decrypt to
+     * byte-identical text against the unencrypted source PDF. The
+     * fixtures under samples/encrypted/ are qpdf-generated from
+     * samples/Document1_pdfcreator.pdf with an empty user password.
+     *
+     * @dataProvider encryptedFixtureProvider
+     */
+    public function testEncryptedFixtureDecryptsToCleartext(string $fixture): void
+    {
+        $clearPath = $this->rootDir.'/samples/Document1_pdfcreator.pdf';
+        $encPath = $this->rootDir.'/samples/encrypted/'.$fixture;
+        $this->assertFileExists($encPath, 'Missing encrypted fixture: '.$fixture);
+
+        $cleartext = (new Parser())->parseFile($clearPath)->getText();
+        $decrypted = (new Parser())->parseFile($encPath)->getText();
+
+        $this->assertSame(trim($cleartext), trim($decrypted));
+    }
+
+    /**
+     * Non-empty passwords are not yet implemented — the dispatcher
+     * must signal that rather than silently failing.
+     */
+    public function testNonEmptyPasswordThrowsNotImplemented(): void
+    {
+        $config = new Config();
+        $config->setDecryptPassword('any-non-empty-password');
+
+        $this->expectException(\Smalot\PdfParser\Exception\NotImplementedException::class);
+        (new Parser([], $config))->parseFile($this->rootDir.'/samples/encrypted/r3_rc4_128.pdf');
+    }
+
+    /**
+     * Wrong empty password against a PDF whose actual user password
+     * isn't empty is the textbook incorrect-password case. We don't
+     * ship such a fixture; we construct the same scenario by feeding
+     * any of our empty-password fixtures through a tampered Encrypt
+     * dictionary at the SecurityHandler level — covered by unit tests.
+     * Here we only confirm the end-to-end empty-password path returns
+     * usable text for a representative fixture.
+     */
+    public function testRepresentativeFixtureExtractsExpectedSubstring(): void
+    {
+        $document = (new Parser())->parseFile(
+            $this->rootDir.'/samples/encrypted/r6_aes_256.pdf'
+        );
+
+        $text = $document->getText();
+        $this->assertStringContainsString('Document title', $text);
+        $this->assertStringContainsString('Lorem ipsum', $text);
     }
 
     /**

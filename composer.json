@@ -1,9 +1,9 @@
 {
-    "name": "smalot/pdfparser",
-    "description": "Pdf parser library. Can read and extract information from pdf file.",
-    "keywords": ["PDF", "text", "parser", "parse", "extract"],
+    "name": "denysmedvid/pdfparser",
+    "description": "Pdf parser library with secured/encrypted PDF support. A fork of smalot/pdfparser that can read and extract information from pdf files, including encrypted ones (RC4 40/128-bit, AES-128 and AES-256).",
+    "keywords": ["PDF", "text", "parser", "parse", "extract", "encrypted", "secured", "decrypt"],
     "type": "library",
-    "license": "LGPL-3.0",
+    "license": "LGPL-3.0-or-later",
     "authors": [
         {
             "name": "Sebastien MALOT",
@@ -18,7 +18,11 @@
         "php": ">=7.1",
         "symfony/polyfill-mbstring": "^1.18",
         "ext-zlib": "*",
-        "ext-iconv": "*"
+        "ext-iconv": "*",
+        "ext-openssl": "*"
+    },
+    "replace": {
+        "smalot/pdfparser": "self.version"
     },
     "autoload": {
         "psr-0": {

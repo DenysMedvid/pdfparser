@@ -43,6 +43,7 @@
 namespace Smalot\PdfParser\RawData;
 
 use Smalot\PdfParser\Config;
+use Smalot\PdfParser\Encryption\SecurityHandler;
 use Smalot\PdfParser\Exception\EmptyPdfException;
 use Smalot\PdfParser\Exception\MissingPdfHeaderException;
 
@@ -69,6 +70,15 @@ class RawDataParser
     protected $objects;
 
     /**
+     * Set after the trailer is parsed and the /Encrypt dictionary is
+     * located. Null when the PDF is unencrypted or when encryption is
+     * being ignored via Config::setIgnoreEncryption().
+     *
+     * @var SecurityHandler|null
+     */
+    private $securityHandler;
+
+    /**
      * @param array $cfg Configuration array, default is []
      */
     public function __construct($cfg = [], ?Config $config = null)
@@ -91,7 +101,7 @@ class RawDataParser
      *
      * @throws \Exception
      */
-    protected function decodeStream(string $pdfData, array $xref, array $sdic, string $stream): array
+    protected function decodeStream(string $pdfData, array $xref, array $sdic, string $stream, ?string $objRef = null): array
     {
         // get stream length and filters
         $slength = \strlen($stream);
@@ -126,6 +136,21 @@ class RawDataParser
             }
         }
 
+        // Stream-level decryption runs *before* the FlateDecode/etc.
+        // filter loop so the downstream filters see plaintext bytes.
+        //
+        // Carve-outs:
+        //  - Cross-reference streams (/Type /XRef) are never encrypted.
+        //  - Metadata streams (/Type /Metadata /Subtype /XML) are
+        //    decrypted only when the document's /EncryptMetadata is true.
+        //  - The /Encrypt object itself (handled by isExempt).
+        if (null !== $this->securityHandler && null !== $objRef
+            && !$this->securityHandler->isExempt($objRef)
+            && !self::dictTypeIs($sdic, 'XRef')
+            && (!self::dictTypeIs($sdic, 'Metadata') || $this->securityHandler->shouldDecryptMetadata())) {
+            $stream = $this->securityHandler->decryptStream($stream, $objRef);
+        }
+
         // decode the stream
         $remaining_filters = [];
         foreach ($filters as $filter) {
@@ -147,6 +172,55 @@ class RawDataParser
         }
 
         return [$stream, $remaining_filters];
+    }
+
+    /**
+     * Whether a raw stream dictionary contains `/Type /<name>`.
+     *
+     * @param array<int,array> $sdic Stream dictionary entries (alternating key/value).
+     */
+    private static function dictTypeIs(array $sdic, string $name): bool
+    {
+        foreach ($sdic as $k => $v) {
+            if (\is_array($v) && '/' === ($v[0] ?? null) && 'Type' === ($v[1] ?? null)
+                && isset($sdic[$k + 1]) && \is_array($sdic[$k + 1])
+                && '/' === ($sdic[$k + 1][0] ?? null) && $name === ($sdic[$k + 1][1] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Re-escape decrypted plaintext bytes into a PDF literal-string
+     * payload so the downstream Parser/ElementString unescape produces
+     * the same bytes. Minimal: only `(`, `)`, `\` and control bytes
+     * need escaping.
+     */
+    private static function pdfEscapeLiteral(string $plain): string
+    {
+        $out = '';
+        $len = \strlen($plain);
+        for ($i = 0; $i < $len; ++$i) {
+            $c = $plain[$i];
+            $o = \ord($c);
+            if ('\\' === $c) {
+                $out .= '\\\\';
+            } elseif ('(' === $c) {
+                $out .= '\\(';
+            } elseif (')' === $c) {
+                $out .= '\\)';
+            } elseif ($o < 0x20 || 0x7F === $o) {
+                // Encode control bytes as 3-digit octal so the literal
+                // is round-trip safe through ElementString::parse.
+                $out .= '\\'.str_pad(decoct($o), 3, '0', \STR_PAD_LEFT);
+            } else {
+                $out .= $c;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -571,11 +645,11 @@ class RawDataParser
         do {
             $oldOffset = $offset;
             // get element
-            $element = $this->getRawObject($pdfData, $offset, null != $header ? $header[1] : null);
+            $element = $this->getRawObject($pdfData, $offset, null != $header ? $header[1] : null, $objRef);
             $offset = $element[2];
             // decode stream using stream's dictionary information
             if ($decoding && ('stream' === $element[0]) && null != $header) {
-                $element[3] = $this->decodeStream($pdfData, $xref, $header[1], $element[1]);
+                $element[3] = $this->decodeStream($pdfData, $xref, $header[1], $element[1], $objRef);
             }
             $objContentArr[$i] = $element;
             $header = isset($element[0]) && '<<' === $element[0] ? $element : null;
@@ -626,7 +700,7 @@ class RawDataParser
      *
      * @return array containing object type, raw value and offset to next object
      */
-    protected function getRawObject(string $pdfData, int $offset = 0, ?array $headerDic = null): array
+    protected function getRawObject(string $pdfData, int $offset = 0, ?array $headerDic = null, ?string $objRef = null): array
     {
         $objtype = ''; // object type to be returned
         $objval = ''; // object value to be returned
@@ -644,7 +718,7 @@ class RawDataParser
                 if ($next > 0) {
                     $offset += $next;
 
-                    return $this->getRawObject($pdfData, $offset);
+                    return $this->getRawObject($pdfData, $offset, null, $objRef);
                 }
                 break;
 
@@ -690,6 +764,16 @@ class RawDataParser
                     }
                     $objval = substr($pdfData, $offset, $strpos - $offset - 1);
                     $offset = $strpos;
+                    if (null !== $this->securityHandler && null !== $objRef
+                        && !$this->securityHandler->isExempt($objRef)) {
+                        // PDF-unescape -> decrypt -> re-escape so the downstream
+                        // Parser/ElementString flow remains unchanged.
+                        $plain = $this->securityHandler->decryptString(
+                            SecurityHandler::pdfUnescapeLiteral($objval),
+                            $objRef
+                        );
+                        $objval = self::pdfEscapeLiteral($plain);
+                    }
                 }
                 break;
 
@@ -704,7 +788,7 @@ class RawDataParser
                     do {
                         $oldOffset = $offset;
                         // get element
-                        $element = $this->getRawObject($pdfData, $offset);
+                        $element = $this->getRawObject($pdfData, $offset, null, $objRef);
                         $offset = $element[2];
                         $objval[] = $element;
                     } while ((']' != $element[0]) && ($offset != $oldOffset));
@@ -725,7 +809,7 @@ class RawDataParser
                         do {
                             $oldOffset = $offset;
                             // get element
-                            $element = $this->getRawObject($pdfData, $offset);
+                            $element = $this->getRawObject($pdfData, $offset, null, $objRef);
                             $offset = $element[2];
                             $objval[] = $element;
                         } while (('>>' != $element[0]) && ($offset != $oldOffset));
@@ -743,6 +827,12 @@ class RawDataParser
                         // remove white space characters
                         $objval = strtr(substr($pdfData, $offset, $span), $this->config->getPdfWhitespaces(), '');
                         $offset += $span + 1;
+                        if (null !== $this->securityHandler && null !== $objRef
+                            && !$this->securityHandler->isExempt($objRef)) {
+                            $bin = (string) hex2bin(1 === (\strlen($objval) & 1) ? $objval.'0' : $objval);
+                            $plain = $this->securityHandler->decryptString($bin, $objRef);
+                            $objval = bin2hex($plain);
+                        }
                     } elseif (false !== ($endpos = strpos($pdfData, '>', $offset))) {
                         $offset = $endpos + 1;
                     }
@@ -976,6 +1066,11 @@ class RawDataParser
             $xref = $this->getXrefData($pdfData);
         }
 
+        // Initialize the security handler before parsing document objects
+        // so each subsequent getIndirectObject() decrypts its strings and
+        // stream in place. Bypassed when ignoreEncryption is set.
+        $this->initSecurityHandler($pdfData, $xref);
+
         // parse all document objects
         $objects = [];
         foreach ($xref['xref'] as $obj => $offset) {
@@ -986,5 +1081,50 @@ class RawDataParser
         }
 
         return [$xref, $objects];
+    }
+
+    /**
+     * Resolve the /Encrypt object and construct a {@see SecurityHandler}.
+     * No-op if the document is unencrypted or if Config has
+     * ignoreEncryption set.
+     */
+    private function initSecurityHandler(string $pdfData, array $xref): void
+    {
+        $this->securityHandler = null;
+
+        $encryptObjRef = $xref['trailer']['encrypt'] ?? null;
+        if (null === $encryptObjRef) {
+            return;
+        }
+        if ($this->config->getIgnoreEncryption()) {
+            return;
+        }
+        if (!isset($xref['xref'][$encryptObjRef])) {
+            // The /Encrypt reference points outside the xref table.
+            // Treat as unrecoverable rather than silently letting the
+            // document parse with garbage content.
+            throw new \Exception(
+                'Encrypted PDF: /Encrypt indirect object '.$encryptObjRef
+                .' is not present in the xref table.'
+            );
+        }
+
+        $rawEncryptObj = $this->getIndirectObject(
+            $pdfData,
+            $xref,
+            $encryptObjRef,
+            $xref['xref'][$encryptObjRef],
+            false
+        );
+
+        $fileIdHex = $xref['trailer']['id'][0] ?? '';
+        $fileId = (string) hex2bin((string) $fileIdHex);
+
+        $this->securityHandler = SecurityHandler::fromRawEncryptObject(
+            $rawEncryptObj,
+            $encryptObjRef,
+            $fileId,
+            $this->config->getDecryptPassword()
+        );
     }
 }
