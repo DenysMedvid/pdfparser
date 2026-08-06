@@ -6,7 +6,14 @@
 [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/smalot/pdfparser/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/smalot/pdfparser/?branch=master)
 [![Downloads](https://poser.pugx.org/smalot/pdfparser/downloads)](//packagist.org/packages/smalot/pdfparser)
 
-The `smalot/pdfparser` is a standalone PHP package that provides various tools to extract data from PDF files.
+The `denysmedvid/pdfparser` is a standalone PHP package that provides various tools to extract data from PDF files,
+including secured (encrypted) ones.
+
+### About this fork
+
+This repository is a fork of [smalot/pdfparser](https://github.com/smalot/pdfparser). It tracks upstream and adds
+support for secured PDF files. Issues specific to this fork belong in the
+[fork issue tracker](https://github.com/DenysMedvid/pdfparser/issues).
 
 ### Maintenance status
 
@@ -23,8 +30,9 @@ If you plan to contribute anything beyond a small, well-scoped fix, please read 
 - Support of MAC OS Roman charset encoding
 - Handling of hexa and octal encoding in text sections
 - Create custom configurations (see [CustomConfig.md](/doc/CustomConfig.md)).
+- **Added in this fork:** Fix for: Secured pdf file are currently not supported.
 
-Currently, secured documents and extracting form data are not supported.
+Currently, extracting form data is not supported.
 
 ## License
 
@@ -36,8 +44,10 @@ This library requires PHP 7.1+ since [v1](https://github.com/smalot/pdfparser/re
 You can install it via [Composer](https://getcomposer.org/):
 
 ```bash
-composer require smalot/pdfparser
+composer require denysmedvid/pdfparser
 ```
+
+This package `replace`s `smalot/pdfparser`, so the namespace (`Smalot\PdfParser\`) and API stay unchanged.
 
 In case you can't use Composer, you can include `alt_autoload.php-dist`. It will include all required files automatically.
 
