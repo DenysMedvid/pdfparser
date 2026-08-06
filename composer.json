@@ -8,10 +8,14 @@
         {
             "name": "Sebastien MALOT",
             "email": "sebastien@malot.fr"
+        },
+        {
+            "name": "Denys Medvid",
+            "email": "denys@medvid.cc"
         }
     ],
     "support": {
-        "issues": "https://github.com/smalot/pdfparser/issues"
+        "issues": "https://github.com/DenysMedvid/pdfparser/issues"
     },
     "homepage": "https://www.pdfparser.org",
     "require": {
